@@ -12,7 +12,7 @@ use crate::dma;
 use crate::hal::prelude::*;
 use crate::hal::serial;
 use crate::pac;
-use crate::rcc::{Enable, Reset};
+use crate::rcc::{BusClock, Enable, Reset};
 use crate::state;
 use nb::block;
 
@@ -124,31 +124,37 @@ where
     PINS: Pins<USART>,
     USART: Instance,
 {
-    pub fn new(usart: USART, pins: PINS, clocks: Clocks, config: Config) -> Self {
+    pub fn new(usart: USART, pins: PINS, clocks: &Clocks, config: Config) -> Self {
         // NOTE(unsafe) This executes only during initialisation
         let rcc = unsafe { &(*RCC::ptr()) };
 
         // TODO: The unsafe calls below should be replaced with accessing
         //       the correct registers directly.
 
-        USART::select_sysclock(rcc);
+        USART::select_sysclock(rcc, config.sysclock);
         unsafe {
             USART::enable_unchecked();
         }
+
+        let clk = if config.sysclock {
+            clocks.sysclk()
+        } else {
+            USART::clock(clocks)
+        };
 
         // Calculate correct baudrate divisor on the fly
         let brr = match config.oversampling {
             Oversampling::By8 => {
                 usart.cr1.modify(|_, w| w.over8().set_bit());
 
-                let usart_div = 2 * clocks.sysclk() / config.baud_rate;
+                let usart_div = 2 * clk / config.baud_rate;
 
                 0xfff0 & usart_div | 0x0007 & ((usart_div & 0x000f) >> 1)
             }
             Oversampling::By16 => {
                 usart.cr1.modify(|_, w| w.over8().clear_bit());
 
-                clocks.sysclk() / config.baud_rate
+                clk / config.baud_rate
             }
         };
 
@@ -409,6 +415,7 @@ pub struct Config {
     pub baud_rate: BitsPerSecond,
     pub oversampling: Oversampling,
     pub character_match: Option<u8>,
+    pub sysclock: bool,
 }
 
 pub enum Oversampling {
@@ -422,6 +429,7 @@ impl Default for Config {
             baud_rate: 115_200.bps(),
             oversampling: Oversampling::By16,
             character_match: None,
+            sysclock: false,
         }
     }
 }
@@ -440,9 +448,9 @@ pub enum Event {
 }
 
 /// Implemented by all USART instances
-pub trait Instance: Deref<Target = pac::usart1::RegisterBlock> + Enable + Reset {
+pub trait Instance: Deref<Target = pac::usart1::RegisterBlock> + Enable + Reset + BusClock {
     fn ptr() -> *const pac::usart1::RegisterBlock;
-    fn select_sysclock(rcc: &pac::rcc::RegisterBlock);
+    fn select_sysclock(rcc: &pac::rcc::RegisterBlock, sys: bool);
 }
 
 macro_rules! impl_instance {
@@ -455,8 +463,8 @@ macro_rules! impl_instance {
                     $USARTX::ptr()
                 }
 
-                fn select_sysclock(rcc: &pac::rcc::RegisterBlock) {
-                    rcc.dckcfgr2.modify(|_, w| w.$usartXsel().bits(1));
+                fn select_sysclock(rcc: &pac::rcc::RegisterBlock, sys: bool) {
+                    rcc.dckcfgr2.modify(|_, w| w.$usartXsel().bits(sys as _));
                 }
             }
         )+

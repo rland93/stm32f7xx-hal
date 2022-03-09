@@ -30,6 +30,14 @@ fn main() -> ! {
     let mut rcc = dp.RCC.constrain();
     let clocks = rcc.cfgr.freeze();
 
+    let mut timer = Timer::tim2(dp.TIM2, 1.Hz(), &clocks, &mut rcc.apb1);
+    timer.listen(Event::TimeOut);
+
+    // Save information needed by the interrupt handler to the global variable
+    free(|cs| {
+        TIMER.borrow(cs).replace(Some(timer));
+    });
+
     unsafe {
         NVIC::unmask(pac::Interrupt::TIM2);
     }

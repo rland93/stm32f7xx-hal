@@ -26,7 +26,7 @@ fn main() -> ! {
     let clocks = rcc.cfgr.sysclk(216.MHz()).freeze();
 
     // Get delay provider
-    let mut delay = Delay::new(cp.SYST, clocks);
+    let mut delay = Delay::new(cp.SYST, &clocks);
 
     loop {
         led.set_high();
